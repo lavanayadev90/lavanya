@@ -1,0 +1,64 @@
+import requests
+
+# Downloading a book from Project Gutenberg
+url = "https://www.gutenberg.org/files/1342/1342-0.txt"
+response = requests.get(url)
+text = response.text
+import re
+from keras.preprocessing.text import Tokenizer
+from keras.utils import pad_sequences
+
+# Clean the text
+text = text.lower()
+text = re.sub(r'\W', ' ', text)  # Remove non-alphabetic characters
+text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with a single space
+
+# Tokenize the text
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([text])
+total_words = len(tokenizer.word_index) + 1
+
+# Create sequences of words
+input_sequences = []
+for i in range(1, len(text)):
+    n_gram_sequence = text.split()[:i+1]
+    input_sequences.append(tokenizer.texts_to_sequences([' '.join(n_gram_sequence)])[0])
+
+# Pad sequences to ensure uniform length
+max_sequence_len = max([len(seq) for seq in input_sequences])
+input_sequences = pad_sequences(input_sequences, maxlen=max_sequence_len, padding='pre')
+import numpy as np
+from keras.utils import to_categorical
+
+# Split data into input (X) and output (y)
+input_sequences = np.array(input_sequences)
+X, y = input_sequences[:,:-1], input_sequences[:,-1]
+y = to_categorical(y, num_classes=total_words)
+from keras.models import Sequential
+from keras.layers import Embedding, LSTM, Dense, Dropout
+
+model = Sequential()
+model.add(Embedding(total_words, 100, input_length=max_sequence_len-1))
+model.add(LSTM(150, return_sequences=True))
+model.add(Dropout(0.2))
+model.add(LSTM(100))
+model.add(Dense(total_words, activation='softmax'))
+
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+model.summary()
+history = model.fit(X, y, epochs=20, verbose=1)
+def generate_text(seed_text, next_words, max_sequence_len):
+    for _ in range(next_words):
+        token_list = tokenizer.texts_to_sequences([seed_text])[0]
+        token_list = pad_sequences([token_list], maxlen=max_sequence_len-1, padding='pre')
+        predicted = model.predict(token_list, verbose=0)
+        predicted_word_index = np.argmax(predicted, axis=-1)
+        output_word = tokenizer.index_word[predicted_word_index[0]]
+        seed_text += " " + output_word
+    return seed_text
+seed_text = "It was a dark and stormy night"
+generated_text = generate_text(seed_text, 50, max_sequence_len)
+print(generated_text)
+model.save("text_generator_model.h5")
+from keras.models import load_model
+model = load_model("text_generator_model.h5")
