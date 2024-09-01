@@ -1,0 +1,108 @@
+import requests
+
+url = "https://www.gutenberg.org/files/1342/1342-0.txt"
+try:
+    response = requests.get(url)
+    response.raise_for_status()  # Raises an error for bad responses
+    text = response.text
+except requests.exceptions.RequestException as e:
+    print(f"Error downloading the dataset: {e}")
+    text = ""
+import re
+from keras.preprocessing.text import Tokenizer
+from keras.utils import pad_sequences
+
+# Clean the text
+text = text.lower()
+text = re.sub(r'[^a-zA-Z\s]', '', text)  # Remove non-alphabetic characters
+text = re.sub(r'\s+', ' ', text).strip()  # Replace multiple spaces with a single space
+
+# Check if the text is empty after cleaning
+if not text:
+    raise ValueError("The cleaned text is empty. Check the preprocessing steps.")
+
+# Tokenize the text
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([text])
+total_words = len(tokenizer.word_index) + 1
+
+# Create sequences of words
+input_sequences = []
+for i in range(1, len(text.split())):
+    n_gram_sequence = text.split()[:i+1]
+    sequence = tokenizer.texts_to_sequences([' '.join(n_gram_sequence)])[0]
+    if len(sequence) > 1:
+        input_sequences.append(sequence)
+
+# Handle case where no sequences are generated
+if not input_sequences:
+    raise ValueError("No input sequences were generated. Check the tokenization process.")
+
+# Pad sequences to ensure uniform length
+max_sequence_len = max([len(seq) for seq in input_sequences])
+input_sequences = pad_sequences(input_sequences, maxlen=max_sequence_len, padding='pre')
+import numpy as np
+from keras.utils import to_categorical
+
+# Split data into input (X) and output (y)
+input_sequences = np.array(input_sequences)
+if input_sequences.shape[1] == 1:
+    raise ValueError("The input sequences are too short. Check sequence generation logic.")
+X, y = input_sequences[:,:-1], input_sequences[:,-1]
+
+# Convert output labels to categorical
+y = to_categorical(y, num_classes=total_words)
+
+# Ensure X and y shapes match
+if X.shape[0] != y.shape[0]:
+    raise ValueError("Mismatch between input sequences and labels.")
+from keras.models import Sequential
+from keras.layers import Embedding, LSTM, Dense, Dropout
+
+model = Sequential()
+model.add(Embedding(total_words, 100, input_length=max_sequence_len-1))
+model.add(LSTM(150, return_sequences=True))
+model.add(Dropout(0.2))
+model.add(LSTM(100))
+model.add(Dense(total_words, activation='softmax'))
+
+try:
+    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.summary()
+except Exception as e:
+    print(f"Error in model compilation: {e}")
+    raise
+try:
+    history = model.fit(X, y, epochs=20, verbose=1, batch_size=128)
+except Exception as e:
+    print(f"Error during model training: {e}")
+    raise
+def generate_text(seed_text, next_words, max_sequence_len):
+    for _ in range(next_words):
+        token_list = tokenizer.texts_to_sequences([seed_text])[0]
+        token_list = pad_sequences([token_list], maxlen=max_sequence_len-1, padding='pre')
+        predicted = model.predict(token_list, verbose=0)
+        predicted_word_index = np.argmax(predicted, axis=-1)
+        output_word = tokenizer.index_word.get(predicted_word_index[0], "")
+        if not output_word:  # Break if no valid word is found
+            break
+        seed_text += " " + output_word
+    return seed_text
+
+# Example text generation
+seed_text = "It was a dark and stormy night"
+generated_text = generate_text(seed_text, 50, max_sequence_len)
+print(generated_text)
+try:
+    model.save("text_generator_model.h5")
+except Exception as e:
+    print(f"Error saving the model: {e}")
+    raise
+from keras.models import load_model
+
+try:
+    model = load_model("text_generator_model.h5")
+    print("Model loaded successfully.")
+except Exception as e:
+    print(f"Error loading the model: {e}")
+    raise
